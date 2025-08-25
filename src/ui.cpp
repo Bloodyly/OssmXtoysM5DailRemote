@@ -33,9 +33,9 @@ void drawLabels(){
   float aL = TOP_START * M_PI/180.0f;
   float aR = TOP_END   * M_PI/180.0f;
   int r_text = R_RANGE_OUT + 12;       // radial nach außen
-  int xL = CX + (int)roundf(r_text * cosf(aL)) - 6;
+  int xL = CX + (int)roundf(r_text * cosf(aL)) ;
   int yL = CY + (int)roundf(r_text * sinf(aL)) + 8;
-  int xR = CX + (int)roundf(r_text * cosf(aR)) + 6;
+  int xR = CX + (int)roundf(r_text * cosf(aR)) ;
   int yR = CY + (int)roundf(r_text * sinf(aR)) + 8;
   d.drawString(String(g_stroke)+"%", xL, yL);
   d.drawString(String(g_depth )+"%", xR, yR);
