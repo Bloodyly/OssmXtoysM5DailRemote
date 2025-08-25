@@ -16,8 +16,8 @@ static const int R_SPEED_IN   = 100;
 static const int R_SPEED_OUT  = 112;
 
 // Stroke/Depth dick, schließt an Speed-IN an (außen = 100)
-static const int R_RANGE_OUT  = R_SPEED_IN; // 100
-static const int R_RANGE_IN   = 66;
+static const int R_RANGE_OUT  = R_SPEED_IN-2; // 100
+static const int R_RANGE_IN   = 74;
 
 // Sens/Pos dicker Ring unten
 static const int R_SENS_IN    = 92;
