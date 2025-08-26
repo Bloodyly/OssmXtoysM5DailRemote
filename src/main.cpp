@@ -8,6 +8,8 @@ void setup(){
   M5Dial.begin(cfg, true, false);
   Serial.begin(115200);
 
+  startEncoderSampler();       // … dann Sampler starten
+
   g_spr.setColorDepth(16);
   g_spr.createSprite(240,240);
   g_spr.setTextWrap(false);
@@ -18,6 +20,8 @@ void setup(){
 }
 
 void loop(){
+  //M5Dial.update();
+
   inputUpdate();      // Buttons, Encoder, Touch, BLE-Actions auslösen
   if (needsRedraw) {  // nur neu zeichnen wenn notwendig → flackerfrei
     drawUI();

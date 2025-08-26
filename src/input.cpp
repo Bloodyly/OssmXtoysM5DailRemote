@@ -5,6 +5,76 @@
 #include "utils.h"
 #include "ble.h"
 
+// FreeRTOS
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+// ---- globals ----
+volatile int32_t g_enc_accum = 0;
+static portMUX_TYPE g_enc_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static TaskHandle_t s_encTask = nullptr;
+
+// Atomar abholen (read-and-reset)
+int32_t takeEncoderDelta(){
+  int32_t d;
+  taskENTER_CRITICAL(&g_enc_mux);
+  d = g_enc_accum;
+  g_enc_accum = 0;
+  taskEXIT_CRITICAL(&g_enc_mux);
+  return d;
+}
+
+// 1 kHz Sampler: liest M5Dial.Encoder und sammelt Deltas
+static void encoderSampler(void*){
+  int32_t last = 0;
+
+  // Wichtig: einmal initial update(), dann Ausgangswert holen
+  M5Dial.update();
+  last = M5Dial.Encoder.read();
+
+  for(;;){
+    // Alle 2 ms reicht meist locker, 1 ms geht auch – 2 ms schont I2C/Touch
+    vTaskDelay(pdMS_TO_TICKS(2));
+
+    // EINZIGE Stelle im Programm, die M5Dial.update() aufruft:
+    M5Dial.update();
+
+    int32_t cur = M5Dial.Encoder.read();
+    int32_t d   = cur - last;
+    if (d) {
+      portENTER_CRITICAL(&g_enc_mux);
+      g_enc_accum += d;          // verlustfrei puffer
+      portEXIT_CRITICAL(&g_enc_mux);
+      last = cur;
+    }
+  }
+}
+
+#ifndef APP_CPU_NUM
+// Fallback: App-CPU ist i. d. R. 1 (PRO_CPU=0, APP_CPU=1) auf ESP32/S3
+#define APP_CPU_NUM 1
+#endif
+
+void startEncoderSampler(){
+  if (s_encTask) return;
+  xTaskCreatePinnedToCore(
+    encoderSampler,       // Task-Funktion
+    "enc",                // Name
+    2048,                 // Stack
+    nullptr,              // Param
+    3,                    // Priorität (höher als UI, aber nicht zu hoch)
+    &s_encTask,           // Handle out
+    APP_CPU_NUM           // Core-Pinning
+  );
+}
+
+void stopEncoderSampler(){
+  if (!s_encTask) return;
+  vTaskDelete(s_encTask);
+  s_encTask = nullptr;
+}
+
 // Drag-Status nur lokal
 static bool draggingStroke=false, draggingDepth=false, draggingPosition=false, draggingSensation=false;
 
@@ -153,7 +223,7 @@ static void onRelease(){ draggingStroke=draggingDepth=draggingSensation=dragging
 
 // ---------- Eingabe-Update ----------
 void inputUpdate(){
-  M5Dial.update();
+  //M5Dial.update(); // <- RAUS! Update macht jetzt der Sampler-Task
 
   // BtnA: Long = Settings; Short = Mode toggle oder Auswahl bestätigen im Picker
   if (M5Dial.BtnA.wasHold()) {
@@ -164,51 +234,102 @@ void inputUpdate(){
     else if (!g_showSettings) { toggleMode(); }
   }
 
-  // Encoder — robust + sanfte Beschleunigung
-  int32_t enc = M5Dial.Encoder.read();
-  int32_t rawDelta = enc - lastEncoder;
-  if (rawDelta != 0){
-    lastEncoder = enc;
-    uint32_t now = millis();
-    int sign = (rawDelta>0) - (rawDelta<0);
+  // ---------- Encoder — präzise langsam, beschleunigt schnell ----------
+// ---------- Encoder: verlustfrei + sanfte Beschleunigung ----------
+{
+  //static int32_t lastEnc = 0;
+  static uint32_t lastMs = 0;
+  static float emaVel = 0.0f;       // counts/s (geglättet)
+  static float accSpeed = 0.0f;     // Akkumulator für SPEED/POSITION Schritte (float)
+  //static int lastSign = 0;
 
-    if (sign != 0 && sign != lastDeltaSign && (now - lastDeltaMs) < 10 && abs(rawDelta) <= 3) {
-      // ignore tiny glitch
-    } else {
-      lastDeltaSign = sign;
-      lastDeltaMs = now;
+  const int   DETENT = 4;           // Counts pro Raster beim Picker
+  const float EMA_A  = 0.18f;       // Glättung der Geschwindigkeit
+  const float V0     = 15.0f;       // bis hier keine Beschleunigung
+  const float KGAIN  = 0.012f;      // Steigung für den Multiplikator jenseits V0
+  const float MULT_MAX = 10.0f;     // maximale Beschleunigung
+  const int   MAX_STEPS_PER_FRAME = 60; // Sicherheitscap (Rest bleibt im Accu)
+  const uint32_t MIN_DT_MS = 1;     // dt-Schutz
 
-      int delta = (int)rawDelta;
-      if (abs(delta) >= 4) delta += (delta>0 ? +abs(delta)/3 : -abs(delta)/3);
+int32_t dRaw = takeEncoderDelta();   // <- vom 1 kHz Sampler (verlustfrei)
+if (dRaw != 0) {
+  uint32_t now = millis();
+  uint32_t dt  = (lastMs==0) ? 16 : (now - lastMs);
+  if (dt < MIN_DT_MS) dt = MIN_DT_MS;
+  lastMs = now;
+    // Geschwindigkeit in counts/s
+    float vInst = (abs(dRaw) * 1000.0f) / (float)dt;
+    emaVel = (1.0f - EMA_A) * emaVel + EMA_A * vInst;
 
-      if (g_showPatternPicker){
-        static int accum = 0;
-        accum += delta;
-        int step=0; while (accum >= 4){ step++; accum-=4; } while (accum <= -4){ step--; accum+=4; }
-        if (step!=0){
-          int ni = clampi(g_patternIndex + step, 0, (int)g_patterns.size()-1);
-          if (ni != g_patternIndex){
-            g_patternIndex = ni;
-            int itemY = (CY-60) + g_patternIndex*34 - g_pickerScroll;
-            int topVisible = CY-78 + 12;
-            int botVisible = CY+78 - 12 - 28;
-            if (itemY < topVisible) {
-              g_pickerScroll = clampi(g_pickerScroll - (topVisible - itemY), 0, (int)g_patterns.size()*34);
-            } else if (itemY > botVisible) {
-              g_pickerScroll = clampi(g_pickerScroll + (itemY - botVisible), 0, (int)g_patterns.size()*34);
-            }
-            needsRedraw = true;
+    // kontinuierlicher Multiplikator: 1 + K * max(0, vel - V0)
+    float mult = 1.0f + KGAIN * std::max(0.0f, emaVel - V0);
+    if (mult > MULT_MAX) mult = MULT_MAX;
+
+    //lastMs  = now;
+    //lastEnc = enc;
+
+    // ---- Pattern-Picker: in Detents, verlustfrei mit eigenem Accu ----
+    if (g_showPatternPicker) {
+      static int pickAcc = 0;              // akkumuliert rohe Counts
+      pickAcc += dRaw;
+
+      int step = 0;
+      while (pickAcc >= DETENT)   { step++; pickAcc -= DETENT; }
+      while (pickAcc <= -DETENT)  { step--; pickAcc += DETENT; }
+
+      if (step != 0) {
+        int ni = clampi(g_patternIndex + step, 0, (int)g_patterns.size()-1);
+        if (ni != g_patternIndex) {
+          g_patternIndex = ni;
+
+          // Auto-Scroll in Sichtbereich
+          int itemY = (CY-60) + g_patternIndex*34 - g_pickerScroll;
+          int topVisible = CY-78 + 12;
+          int botVisible = CY+78 - 12 - 28;
+          if (itemY < topVisible) {
+            g_pickerScroll = clampi(g_pickerScroll - (topVisible - itemY), 0, (int)g_patterns.size()*34);
+          } else if (itemY > botVisible) {
+            g_pickerScroll = clampi(g_pickerScroll + (itemY - botVisible), 0, (int)g_patterns.size()*34);
           }
+          needsRedraw = true;
         }
-      } else if (g_mode==Mode::SPEED){
-        int ns = clampi(g_speed + delta, 0, 100);
-        if (ns!=g_speed){ g_speed = ns; needsRedraw = true; if(bleIsConnected()) bleSendSpeed(g_speed);}    
-      } else {
-        int np = clampi(g_position + delta, 0, 100);
-        if (np!=g_position){ g_position = np; needsRedraw = true; if(bleIsConnected()) bleSendMove(g_position, g_moveTime, true);}    
+      }
+      return; // Picker hat Vorrang
+    }
+
+    // ---- Speed/Position: verlustfrei über Float-Accumulator ----
+    //int sign = (dRaw>0) - (dRaw<0);
+    //lastSign = sign;
+
+    // Zieländerung in "Wert-Schritten": rohe Counts * mult
+    float wantDelta = (float)dRaw * mult;
+    accSpeed += wantDelta;
+
+    // Ganze Schritte extrahieren, Rest bleibt im Accu (kein Skip!)
+    int steps = (accSpeed > 0) ? (int)floorf(accSpeed) : (int)ceilf(accSpeed);
+    // pro Frame kappen, Rest verbleibt
+    if (steps >  MAX_STEPS_PER_FRAME) steps =  MAX_STEPS_PER_FRAME;
+    if (steps < -MAX_STEPS_PER_FRAME) steps = -MAX_STEPS_PER_FRAME;
+    accSpeed -= (float)steps;
+
+    if (steps != 0) {
+      if (g_mode == Mode::SPEED) {
+        int ns = clampi(g_speed + steps, 0, 100);
+        if (ns != g_speed) {
+          g_speed = ns; needsRedraw = true;
+          if (bleIsConnected()) bleSendSpeed(g_speed);
+        }
+      } else { // POSITION
+        int np = clampi(g_position + steps, 0, 100);
+        if (np != g_position) {
+          g_position = np; needsRedraw = true;
+          if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true);
+        }
       }
     }
   }
+}
+
 
   // Touch
   auto t = M5Dial.Touch.getDetail();
