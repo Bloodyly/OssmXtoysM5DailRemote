@@ -39,7 +39,13 @@ static void onTap(int x,int y){
       if (x>=rx && x<=rx+140 && y>=ry && y<=ry+24){
         if (i==0){ if (bleIsConnected()) bleDisconnect(); else bleConnectAuto(); closeSettings(); }
         else if (i==1){ g_running=!g_running; closeSettings(); }
-        else if (i==2){ if (bleIsConnected()) bleSendHome(); closeSettings(); }
+        else if (i==2){ 
+          if (bleIsConnected()) {
+            bleSendHome(); 
+            bleSendSetPhysicalTravel(kPhysicalTravelMm);
+            closeSettings(); 
+          }
+        }
         else if (i==3){ if (bleIsConnected()) bleSendDisable(); closeSettings(); }
         return;
       }
@@ -126,7 +132,13 @@ static void onDrag(int x,int y){
     float t = (a + 75.0f) / 150.0f;
     int ns = (int)roundf(((0.5f - t) / 0.5f) * 100.0f);
     ns = clampi(ns, -100, +100);
-    if (ns != g_sensation) { g_sensation = ns; needsRedraw = true; }
+    if (ns != g_sensation) { 
+      g_sensation = ns; 
+      needsRedraw = true;
+      if (g_mode == Mode::SPEED) {
+        bleSendSensation(g_sensation);
+      } 
+    }
   }
   else if (draggingPosition){
     float a = relBottomDeg(x,y);

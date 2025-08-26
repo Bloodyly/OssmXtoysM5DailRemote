@@ -24,6 +24,12 @@ void bleSendRetract();
 void bleSendExtend();
 void bleSendAirIn();
 void bleSendAirOut();
+void bleSendSensation(int v);          // -100..+100
+void bleSendSetPhysicalTravel(int mm); // z.B. 110
 
 inline void sendSpeed(int v)            { bleSendSpeed(v); }
 inline void sendStartStreaming()        { bleSendStartStreaming(); }
+inline void sendSensation(int v)           { bleSendSensation(v); }
+inline void sendRetract()                  { bleSendRetract();    }
+inline void sendExtend()                   { bleSendExtend();     }
+inline void sendSetPhysicalTravel(int mm)  { bleSendSetPhysicalTravel(mm); }

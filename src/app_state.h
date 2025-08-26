@@ -3,6 +3,8 @@
 #include <vector>
 #include <WString.h>
 
+constexpr int kPhysicalTravelMm = 150;
+
 // Offscreen-Buffer global
 extern LGFX_Sprite g_spr;
 

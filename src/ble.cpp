@@ -192,37 +192,94 @@ String blePeerName()    { return s_peerName;  }
 void bleSendJSON(const String& payload) { writeJSON(payload); }
 
 // --- Command wrappers --------------------------------------------------------
-void bleSendConnected()     { writeJSON(F("[{\"action\":\"connected\"}]")); }
-void bleSendHome()          { writeJSON(F("[{\"action\":\"home\",\"type\":\"sensorless\"}]")); }
-void bleSendDisable()       { writeJSON(F("[{\"action\":\"disable\"}]")); }
-void bleSendStartStreaming(){ writeJSON(F("[{\"action\":\"startStreaming\"}]")); }
+void bleSendConnected()     { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"connected\"}]")); 
+  }
+}
+void bleSendHome()          { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"home\",\"type\":\"sensor\"}]")); 
+  }
+}
+void bleSendDisable()       { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"disable\"}]")); 
+  }
+}
+void bleSendStartStreaming(){ 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"startStreaming\"}]")); 
+  }
+}
 
 void bleSendSpeed(int v)  {
-  v = clampi(v,0,100);
-  if (v==0) writeJSON(F("[{\"action\":\"stop\"}]"));
-  else {
-    String s = String(F("[{\"action\":\"setSpeed\",\"speed\":")) + v + F("}]");
-    writeJSON(s);
+  if (bleIsConnected()) {
+    v = clampi(v,0,100);
+    if (v==0) writeJSON(F("[{\"action\":\"stop\"}]"));
+    else {
+      String s = String(F("[{\"action\":\"setSpeed\",\"speed\":")) + v + F("}]");
+      writeJSON(s);
+    }
   }
 }
 void bleSendStroke(int v) {
-  v = clampi(v,0,100);
-  String s = String(F("[{\"action\":\"setStroke\",\"stroke\":")) + v + F("}]");
-  writeJSON(s);
+  if (bleIsConnected()) {
+    v = clampi(v,0,100);
+    String s = String(F("[{\"action\":\"setStroke\",\"stroke\":")) + v + F("}]");
+    writeJSON(s);
+  }
 }
 void bleSendDepth(int v)  {
-  v = clampi(v,0,100);
-  String s = String(F("[{\"action\":\"setDepth\",\"depth\":")) + v + F("}]");
-  writeJSON(s);
+  if (bleIsConnected()) {
+    v = clampi(v,0,100);
+    String s = String(F("[{\"action\":\"setDepth\",\"depth\":")) + v + F("}]");
+    writeJSON(s);
+  }
 }
 void bleSendMove(int pos, int ms, bool replace) {
-  pos = clampi(pos,0,100); ms = clampi(ms, 50, 2000);
-  String s = String(F("[{\"action\":\"move\",\"position\":")) + pos +
-             F(",\"time\":") + ms +
-             F(",\"replace\":") + (replace?F("true"):F("false")) + F("}]");
-  writeJSON(s);
+  if (bleIsConnected()) {
+    pos = clampi(pos,0,100); ms = clampi(ms, 50, 2000);
+    String s = String(F("[{\"action\":\"move\",\"position\":")) + pos +
+              F(",\"time\":") + ms +
+              F(",\"replace\":") + (replace?F("true"):F("false")) + F("}]");
+    writeJSON(s);
+  }
 }
-void bleSendRetract() { writeJSON(F("[{\"action\":\"retract\"}]")); }
-void bleSendExtend()  { writeJSON(F("[{\"action\":\"extend\"}]"));  }
-void bleSendAirIn()   { writeJSON(F("[{\"action\":\"airIn\"}]"));   }
-void bleSendAirOut()  { writeJSON(F("[{\"action\":\"airOut\"}]"));  }
+
+void bleSendSensation(int v) {
+  if (bleIsConnected()) {
+    // clamp -100..+100
+    if (v < -100) v = -100; else if (v > 100) v = 100;
+    String s = String("[{\"action\":\"setSensation\",\"value\":") + v + "}]";
+    writeJSON(s);
+  }
+}
+
+void bleSendSetPhysicalTravel(int mm) {
+  if (bleIsConnected()) {
+    if (mm < 1) mm = 1;             // simple sanity
+    String s = String("[{\"action\":\"setPhysicalTravel\",\"value\":") + mm + "}]";
+    writeJSON(s);
+  }
+}
+void bleSendRetract() { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"retract\"}]")); 
+  }
+}
+void bleSendExtend()  { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"extend\"}]"));  
+  }
+}
+void bleSendAirIn()   { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"airIn\"}]"));
+  }   
+}
+void bleSendAirOut()  { 
+  if (bleIsConnected()) {
+    writeJSON(F("[{\"action\":\"airOut\"}]"));  
+  }
+}
