@@ -8,7 +8,7 @@
 // Drag-Status nur lokal
 static bool draggingStroke=false, draggingDepth=false, draggingPosition=false, draggingSensation=false;
 
-// Helpers
+// ---------- Buttons oben (− ⏯ +) ----------
 static int hitTopButtons(int x,int y){ // − ⏯ +
   int cy=BUTTONS_Y; if (abs(y-cy)>24) return -1;
   if ((x-(CX-CTRL_SPACING))*(x-(CX-CTRL_SPACING))+(y-cy)*(y-cy) <= 18*18) return 0; // minus
@@ -17,16 +17,30 @@ static int hitTopButtons(int x,int y){ // − ⏯ +
   return -1;
 }
 
+// ---------- Lokale Treffer-Tests mit verlagertem Nullpunkt ----------
+static bool hitTopBandRel(int x,int y,int r_in,int r_out){
+  if (!inAnnulus(x,y,r_in,r_out)) return false;
+  float a = relTopDeg(x,y);             // −90..+90 gültig
+  return (a >= -90.0f && a <= +90.0f);
+}
+
+static bool hitBottomBandRel(int x,int y,int r_in,int r_out){
+  if (!inAnnulus(x,y,r_in,r_out)) return false;
+  float a = relBottomDeg(x,y);          // −75..+75 gültig
+  return (a >= -75.0f && a <= +75.0f);
+}
+
+// ---------- Tap-Handling ----------
 static void onTap(int x,int y){
   if (g_showSettings){
     struct Row{int y;}; Row rows[4]={{CY-34},{CY-2},{CY+30},{CY+62}};
     for(int i=0;i<4;i++){
       int rx=CX-70, ry=rows[i].y-12;
       if (x>=rx && x<=rx+140 && y>=ry && y<=ry+24){
-        if (i==0){ if (g_connected) disconnectOSSM(); else connectToOSSM(); closeSettings(); }
+        if (i==0){ if (bleIsConnected()) bleDisconnect(); else bleConnectAuto(); closeSettings(); }
         else if (i==1){ g_running=!g_running; closeSettings(); }
-        else if (i==2){ if (g_connected) sendHome(); closeSettings(); }
-        else if (i==3){ if (g_connected) sendDisable(); closeSettings(); }
+        else if (i==2){ if (bleIsConnected()) bleSendHome(); closeSettings(); }
+        else if (i==3){ if (bleIsConnected()) bleSendDisable(); closeSettings(); }
         return;
       }
     }
@@ -47,83 +61,85 @@ static void onTap(int x,int y){
   if (cc>=0){
     if (cc==1){ toggleMode(); return; }                 // Play/Pause toggelt Mode
     if (g_mode==Mode::SPEED){ return; }                 // ± im Speed aus
-    if (cc==0){ if (g_connected) { sendRetract(); /*sendAirIn();*/ } }
-    if (cc==2){ if (g_connected) { sendExtend();  /*sendAirOut();*/ } }
+    if (cc==0){ if (bleIsConnected()) { bleSendRetract(); /*bleSendAirIn();*/ } }
+    if (cc==2){ if (bleIsConnected()) { bleSendExtend();  /*bleSendAirOut();*/ } }
     return;
   }
 
   // Pattern-Pill unten
   if (x>=CX-60 && x<=CX+60 && y>=CTRL_Y-12 && y<=CTRL_Y+12){ openPicker(); return; }
 
-  // Sens/Pos Band
-  if (hitBandPad(x,y,R_SENS_IN,R_SENS_OUT,SENS_START,SENS_END)){
-    float ang = clampAngleToArc(pointAngle(x,y), SENS_START, SENS_END);
+  // Sens/Pos Band (unterer 150°-Bogen)
+  if (hitBottomBandRel(x,y,R_SENS_IN,R_SENS_OUT)){
+    float a = relBottomDeg(x,y);                // [-75..+75]
+    a = clampf(a, -75.0f, +75.0f);
+    float t = (a + 75.0f) / 150.0f;             // -> [0..1] links..rechts
+
     if (g_mode==Mode::POSITION){
       draggingPosition=true;
-      float t = invMap01(ang, SENS_START, SENS_END); t = clampf(t,0.0f,1.0f);
-      int np = (int)roundf(t*100.0f); if(np!=g_position){ g_position=np; needsRedraw=true; if(g_connected) sendMove(g_position,g_moveTime,true);}    
+      int np = (int)roundf(t*100.0f);
+      if(np!=g_position){ g_position=np; needsRedraw=true; if(bleIsConnected()) bleSendMove(g_position,g_moveTime,true);}    
     } else {
       draggingSensation=true;
-      if (ang <= 90.0f) {
-        float t = invMap01(ang, SENS_START, 90.0f); t = clampf(t,0.0f,1.0f);
-        int ns = (int)roundf((1.0f - t) * 100.0f);
-        if (ns!=g_sensation){ g_sensation=ns; needsRedraw=true; }
-      } else {
-        float t = invMap01(ang, 90.0f, SENS_END); t = clampf(t,0.0f,1.0f);
-        int ns = -(int)roundf(t * 100.0f);
-        if (ns!=g_sensation){ g_sensation=ns; needsRedraw=true; }
-      }
+      // Mapping: links = +100 → Mitte = 0 → rechts = −100
+      int ns = (int)roundf(((0.5f - t) / 0.5f) * 100.0f);
+      ns = clampi(ns,-100,100);
+      if (ns!=g_sensation){ g_sensation=ns; needsRedraw=true; }
     }
     return;
   }
 
   // Speed-Ring: Touch deaktiviert
 
-  // Stroke/Depth Band → Griff wählen
-  if (hitBandPad(x,y,R_RANGE_IN,R_RANGE_OUT,TOP_START,TOP_END)){
-    float ang = clampAngleToArc(pointAngle(x,y), TOP_START, TOP_END);
-    float aS = map01(g_stroke/100.0f, TOP_START, TOP_END);
-    float aD = map01(g_depth /100.0f, TOP_START, TOP_END);
-    if (fabsf(ang-aS) < fabsf(ang-aD)) draggingStroke=true; else draggingDepth=true;
+  // Stroke/Depth Band → Griff wählen (oberer Halbring)
+  if (hitTopBandRel(x,y,R_RANGE_IN,R_RANGE_OUT)){
+    float aRel = relTopDeg(x,y);                 // [-90..+90]
+    // Zielwinkel beider Griffe ebenfalls in relTop-Space:
+    float aS = -90.0f + (g_stroke/100.0f)*180.0f;
+    float aD = -90.0f + (g_depth /100.0f)*180.0f;
+    if (fabsf(aRel-aS) < fabsf(aRel-aD)) draggingStroke=true; else draggingDepth=true;
     return;
   }
 }
 
+// ---------- Drag-Handling ----------
 static void onDrag(int x,int y){
-  float ang = pointAngle(x,y);
   if (draggingStroke){
-    ang = clampAngleToArc(ang, TOP_START, TOP_END);
-    float t=invMap01(ang,TOP_START,TOP_END); t=clampf(t,0.0f,1.0f);
-    int nv=(int)roundf(t*100.0f);
-    nv=clampi(nv, 0, g_depth - MIN_GAP);
-    if(nv!=g_stroke){ g_stroke=nv; needsRedraw=true; if(g_connected) sendStroke(g_stroke);} 
-  } else if (draggingDepth){
-    ang = clampAngleToArc(ang, TOP_START, TOP_END);
-    float t=invMap01(ang,TOP_START,TOP_END); t=clampf(t,0.0f,1.0f);
-    int nv=(int)roundf(t*100.0f);
-    nv=clampi(nv, g_stroke+MIN_GAP, 100);
-    if(nv!=g_depth){ g_depth=nv; needsRedraw=true; if(g_connected) sendDepth(g_depth);} 
-  } else if (draggingSensation){
-    ang = clampAngleToArc(ang, SENS_START, SENS_END);
-    if (ang <= 90.0f) {
-      float t = invMap01(ang, SENS_START, 90.0f); t = clampf(t,0.0f,1.0f);
-      int ns = (int)roundf((1.0f - t) * 100.0f);
-      if (ns!=g_sensation){ g_sensation=ns; needsRedraw=true; }
-    } else {
-      float t = invMap01(ang, 90.0f, SENS_END); t = clampf(t,0.0f,1.0f);
-      int ns = -(int)roundf(t * 100.0f);
-      if (ns!=g_sensation){ g_sensation=ns; needsRedraw=true; }
-    }
-  } else if (draggingPosition){
-    ang = clampAngleToArc(ang, SENS_START, SENS_END);
-    float t=invMap01(ang,SENS_START,SENS_END); t=clampf(t,0.0f,1.0f);
-    int nv=(int)roundf(t*100.0f);
-    if(nv!=g_position){ g_position=nv; needsRedraw=true; if(g_connected) sendMove(g_position,g_moveTime,true);} 
+    float a = relTopDeg(x,y);
+    a = clampf(a, -90.0f, +90.0f);
+    float t = (a + 90.0f) / 180.0f;
+    int nv = (int)roundf(t * 100.0f);
+    nv = clampi(nv, 0, g_depth - MIN_GAP);
+    if (nv != g_stroke) { g_stroke = nv; needsRedraw = true; if (bleIsConnected()) bleSendStroke(g_stroke); }
+  }
+  else if (draggingDepth){
+    float a = relTopDeg(x,y);
+    a = clampf(a, -90.0f, +90.0f);
+    float t = (a + 90.0f) / 180.0f;
+    int nv = (int)roundf(t * 100.0f);
+    nv = clampi(nv, g_stroke + MIN_GAP, 100);
+    if (nv != g_depth) { g_depth = nv; needsRedraw = true; if (bleIsConnected()) bleSendDepth(g_depth); }
+  }
+  else if (draggingSensation){
+    float a = relBottomDeg(x,y);
+    a = clampf(a, -75.0f, +75.0f);
+    float t = (a + 75.0f) / 150.0f;
+    int ns = (int)roundf(((0.5f - t) / 0.5f) * 100.0f);
+    ns = clampi(ns, -100, +100);
+    if (ns != g_sensation) { g_sensation = ns; needsRedraw = true; }
+  }
+  else if (draggingPosition){
+    float a = relBottomDeg(x,y);
+    a = clampf(a, -75.0f, +75.0f);
+    float t = (a + 75.0f) / 150.0f;
+    int nv = (int)roundf(t * 100.0f);
+    if (nv != g_position) { g_position = nv; needsRedraw = true; if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true); }
   }
 }
 
 static void onRelease(){ draggingStroke=draggingDepth=draggingSensation=draggingPosition=false; }
 
+// ---------- Eingabe-Update ----------
 void inputUpdate(){
   M5Dial.update();
 
@@ -144,7 +160,6 @@ void inputUpdate(){
     uint32_t now = millis();
     int sign = (rawDelta>0) - (rawDelta<0);
 
-    // sehr kurzer Gegenimpuls (< 10 ms, klein) ignorieren
     if (sign != 0 && sign != lastDeltaSign && (now - lastDeltaMs) < 10 && abs(rawDelta) <= 3) {
       // ignore tiny glitch
     } else {
@@ -155,7 +170,6 @@ void inputUpdate(){
       if (abs(delta) >= 4) delta += (delta>0 ? +abs(delta)/3 : -abs(delta)/3);
 
       if (g_showPatternPicker){
-        // langsam / präzise: 1 Schritt je ~4 Ticks
         static int accum = 0;
         accum += delta;
         int step=0; while (accum >= 4){ step++; accum-=4; } while (accum <= -4){ step--; accum+=4; }
@@ -163,7 +177,6 @@ void inputUpdate(){
           int ni = clampi(g_patternIndex + step, 0, (int)g_patterns.size()-1);
           if (ni != g_patternIndex){
             g_patternIndex = ni;
-            // Sichtbarkeit sichern
             int itemY = (CY-60) + g_patternIndex*34 - g_pickerScroll;
             int topVisible = CY-78 + 12;
             int botVisible = CY+78 - 12 - 28;
@@ -177,10 +190,10 @@ void inputUpdate(){
         }
       } else if (g_mode==Mode::SPEED){
         int ns = clampi(g_speed + delta, 0, 100);
-        if (ns!=g_speed){ g_speed = ns; needsRedraw = true; if(g_connected) sendSpeed(g_speed);}    
+        if (ns!=g_speed){ g_speed = ns; needsRedraw = true; if(bleIsConnected()) bleSendSpeed(g_speed);}    
       } else {
         int np = clampi(g_position + delta, 0, 100);
-        if (np!=g_position){ g_position = np; needsRedraw = true; if(g_connected) sendMove(g_position, g_moveTime, true);}    
+        if (np!=g_position){ g_position = np; needsRedraw = true; if(bleIsConnected()) bleSendMove(g_position, g_moveTime, true);}    
       }
     }
   }

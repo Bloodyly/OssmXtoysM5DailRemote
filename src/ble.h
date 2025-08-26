@@ -1,24 +1,29 @@
 #pragma once
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 
-// BLE-Status
-extern bool g_connected;
+// Public API
+void bleInit();
+bool bleConnectAuto();     // scan + connect to device named "OSSM"
+void bleDisconnect();
+bool bleIsConnected();
+String blePeerName();
 
-// Init/Connect
-void connectToOSSM();
-void disconnectOSSM();
+void bleSendJSON(const String& payload);
 
-// JSON Kommandos
-void sendJSON(const String& payload);
-void sendConnected();
-void sendHome();
-void sendDisable();
-void sendSpeed(int v);
-void sendStroke(int v);
-void sendDepth(int v);
-void sendStartStreaming();
-void sendMove(int pos,int ms,bool replace);
-void sendRetract();
-void sendExtend();
-void sendAirIn();
-void sendAirOut();
+// Convenience wrappers matching the OSSM README commands
+void bleSendConnected();
+void bleSendHome();                  // sensorless
+void bleSendDisable();
+void bleSendStartStreaming();
+void bleSendSpeed(int v01_100);
+void bleSendStroke(int v01_100);
+void bleSendDepth(int v01_100);
+void bleSendMove(int pos01_100, int ms, bool replace);
+void bleSendRetract();
+void bleSendExtend();
+void bleSendAirIn();
+void bleSendAirOut();
+
+inline void sendSpeed(int v)            { bleSendSpeed(v); }
+inline void sendStartStreaming()        { bleSendStartStreaming(); }

@@ -1,22 +1,38 @@
 #pragma once
-#include <Arduino.h>
+#include <math.h>
+#include "geometry.h"  // liefert CX, CY
 
-// Math
-inline int   clampi(int v, int lo, int hi){ return v<lo?lo:(v>hi?hi:v); }
-inline float clampf(float v,float lo,float hi){ return v<lo?lo:(v>hi?hi:v); }
-inline float lerp(float a,float b,float t){ return a + (b-a)*t; }
-float map01(float v, float a, float b);
-float invMap01(float v, float a, float b);
+// --- clamps ---
+inline int   clampi(int v, int lo, int hi)      { return v<lo?lo:(v>hi?hi:v); }
+inline float clampf(float v, float lo, float hi){ return v<lo?lo:(v>hi?hi:v); }
 
-// Winkel-Helfer
-float normAngle(float a);
-bool  angleBetween(float a,float a0,float a1);
-float clampAngleToArc(float ang,float a0,float a1);
+// --- Mapping helpers ---
+inline float map01(float v, float a, float b)    { return a + (b - a) * v; }
+inline float invMap01(float v, float a, float b) { return (v - a) / (b - a); }
+inline float lerp(float a, float b, float t)     { return a + (b - a) * t; }
 
-// Rendering
-void drawArcBandAA(int cx,int cy,int r_in,int r_out,float a0,float a1,uint32_t color);
-void drawHandleR(int cx,int cy,int r_mid,float ang,uint32_t outline,int rr);
+// --- Winkel/Geometrie ---
+inline float wrap180(float a) {
+  while (a <= -180.0f) a += 360.0f;
+  while (a >   180.0f) a -= 360.0f;
+  return a;
+}
 
-// Hit-Tests
-bool hitBandPad(int x,int y,int r_in,int r_out,float a0,float a1);
-float pointAngle(int x,int y);
+// Rohwinkel (0° = rechts, 90° = oben) um Displayzentrum
+inline float rawAngleDeg(int x, int y) {
+  return atan2f((float)(y - CY), (float)(x - CX)) * 180.0f / M_PI;
+}
+
+// OBERER Halbring: Nullpunkt = unten (270°) -> [-90..+90]
+inline float relTopDeg(int x, int y)    { return wrap180(rawAngleDeg(x,y) - 270.0f); }
+// UNTERER Bogen: Nullpunkt = oben (90°) -> [-75..+75]
+inline float relBottomDeg(int x, int y) { return wrap180(rawAngleDeg(x,y) -  90.0f); }
+
+inline float normAngle(float a){ if(a<0) a+=360.0f; return a; }
+
+// Punkt in Ring (Annulus)
+inline bool inAnnulus(int x,int y,int r_in,int r_out){
+  int dx = x - CX, dy = y - CY;
+  int r2 = dx*dx + dy*dy;
+  return (r2 >= r_in*r_in) && (r2 <= r_out*r_out);
+}

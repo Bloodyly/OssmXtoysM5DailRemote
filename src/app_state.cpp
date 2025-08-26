@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include "ble.h"
 
 // Sprite an den Display-Owner binden
 LGFX_Sprite g_spr(&M5Dial.Display);
