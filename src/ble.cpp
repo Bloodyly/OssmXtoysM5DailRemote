@@ -1,285 +1,219 @@
 #include "ble.h"
-#include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <vector>
 
-// --- Prefer NUS (Nordic UART) ---
-static const BLEUUID UUID_NUS_SERVICE("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
-static const BLEUUID UUID_NUS_RX     ("6E400002-B5A3-F393-E0A9-E50E24DCCA9E"); // central writes here
-static const BLEUUID UUID_NUS_TX     ("6E400003-B5A3-F393-E0A9-E50E24DCCA9E"); // notifications
+static NimBLEClient*               s_client     = nullptr;
+static NimBLERemoteCharacteristic* s_charWrite  = nullptr;
+static NimBLERemoteCharacteristic* s_charNotify = nullptr;
 
-// Connection state
-static bool                       s_bleInited   = false;
-static bool                       s_connected   = false;
-static NimBLEClient*              s_client      = nullptr;
-static NimBLERemoteCharacteristic*s_charWrite   = nullptr;   // where we write JSON
-static NimBLERemoteCharacteristic*s_charNotify  = nullptr;   // optional notify
-static String                     s_peerName    = "";
+// OSSM-Identifikation
+static const char*  kNameNeedle = "OSSM";
+static const char*  kSvcOSSM    = "e5560000-6a2d-436f-a43d-82eab88dcefd"; // aus deinem Scan
 
-// --- Small helpers -----------------------------------------------------------
-static inline int clampi(int v, int lo, int hi){ return v<lo?lo:(v>hi?hi:v); }
-
-// Write helper
-static void writeJSON(const String& s) {
-  if (!s_connected || !s_charWrite) return;
-  const uint8_t* data = (const uint8_t*)s.c_str();
-  size_t len = s.length();
-  if (s_charWrite->canWriteNoResponse()) s_charWrite->writeValue(data, len, false);
-  else                                   s_charWrite->writeValue(data, len, true);
-#if defined(SERIAL_PORT_MONITOR)
-  Serial.print("[BLE→OSSM] "); Serial.println(s);
-#endif
+void ble_disconnect() {
+  if (s_client && s_client->isConnected()) s_client->disconnect();
+  s_client = nullptr; s_charWrite = nullptr; s_charNotify = nullptr;
+  Serial.println("[BLE] disconnected");
 }
 
-// Try to bind NUS first
-static bool bindNUS() {
-  NimBLERemoteService* svc = s_client->getService(UUID_NUS_SERVICE);
-  if (!svc) return false;
+// interner Helper: einmal scannen (active/passive konfigurierbar) und bei Treffer Adresse zurückgeben
+static bool scan_once_for_ossm_addr(int seconds, bool active, NimBLEAddress& outAddr) {
+  NimBLEScan* s = NimBLEDevice::getScan();
+  s->stop(); s->clearResults();
+  s->setActiveScan(active);
+  s->setDuplicateFilter(false);  // wichtig: nichts wegfiltern
+  s->setMaxResults(0);
+  if (active) { s->setInterval(96);  s->setWindow(48);  }
+  else        { s->setInterval(160); s->setWindow(160); }
 
-  s_charWrite  = svc->getCharacteristic(UUID_NUS_RX);
-  s_charNotify = svc->getCharacteristic(UUID_NUS_TX);
+  Serial.printf("[BLE] scan_for_ossm %s %ds ...\n", active ? "ACTIVE" : "PASSIVE", seconds);
+  if (!s->start(seconds, false)) { Serial.println("[BLE] scan start failed"); return false; }
 
-  if (s_charNotify && s_charNotify->canNotify()) {
-    s_charNotify->subscribe(true,
-      [](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
-#if defined(SERIAL_PORT_MONITOR)
-        Serial.print("[OSSM→BLE] ");
-        for (size_t i=0;i<len;i++) Serial.print((char)data[i]);
-        Serial.println();
-#endif
+  auto res = s->getResults();
+  for (int i = 0; i < res.getCount(); ++i) {
+    const NimBLEAdvertisedDevice* d = res.getDevice(i);
+    if (!d) continue;
+
+    bool nameHit = false, uuidHit = false;
+
+    // Name enthält "OSSM"?
+    const std::string& n = d->getName();
+    if (!n.empty() && n.find(kNameNeedle) != std::string::npos) nameHit = true;
+
+    // Service-UUID match?
+    if (d->haveServiceUUID()) {
+      for (int u = 0; u < d->getServiceUUIDCount(); ++u) {
+        if (d->getServiceUUID(u).equals(NimBLEUUID(kSvcOSSM))) { uuidHit = true; break; }
       }
-    );
+    }
+
+    if (nameHit || uuidHit) {
+      outAddr = d->getAddress(); // **Adresse kopieren**, kein Pointer zurückgeben!
+      Serial.printf("[BLE] OSSM candidate: %s  RSSI=%d  Name=%s  (%s%s)\n",
+                    outAddr.toString().c_str(), d->getRSSI(),
+                    n.empty() ? "<none>" : n.c_str(),
+                    nameHit ? "name" : "", (nameHit && uuidHit) ? "+" : (uuidHit ? "uuid" : ""));
+      s->stop();
+      s->clearResults();
+      return true;
+    }
   }
-  return (s_charWrite != nullptr);
+
+  s->stop();
+  s->clearResults();
+  return false;
 }
 
-// Fallback: iterate advertised services, pick first writeable char
-static bool bindFirstWritable(const NimBLEAdvertisedDevice* advDev) {
-  // Try advertised UUIDs to limit discovery work
-  if (advDev && advDev->haveServiceUUID()) {
-    int count = advDev->getServiceUUIDCount();
-    for (int i=0; i<count; ++i) {
-      NimBLEUUID su = advDev->getServiceUUID(i);
-      NimBLERemoteService* s = s_client->getService(su);
-      if (!s) continue;
+// versucht ACTIVE → PASSIVE; liefert bei Erfolg true & setzt outAddr
+static bool scan_for_ossm_addr(int seconds, NimBLEAddress& outAddr) {
+  if (scan_once_for_ossm_addr(seconds, /*active=*/true, outAddr))  return true;
+  Serial.println("[BLE] no hit in ACTIVE; try PASSIVE …");
+  if (scan_once_for_ossm_addr(seconds, /*active=*/false, outAddr)) return true;
+  return false;
+}
 
-      std::vector<NimBLERemoteCharacteristic*> chs = s->getCharacteristics(true);
+static void subscribe_if_possible(NimBLERemoteCharacteristic* c) {
+  if (!c || !c->canNotify()) return;
+  bool ok = c->subscribe(true, [](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool){
+    Serial.print("[NTFY] ");
+    for (size_t i=0;i<len;i++) Serial.print((char)data[i]);
+    Serial.println();
+  });
+  if (ok) Serial.printf("[BLE] subscribed to %s\n", c->getUUID().toString().c_str());
+}
+
+bool ble_find_and_connect_ossm(int scan_seconds) {
+  if (scan_seconds <= 0) scan_seconds = 10;
+
+  NimBLEAddress addr;
+  if (!scan_for_ossm_addr(scan_seconds, addr)) {
+    Serial.println("[BLE] no OSSM found");
+    return false;
+  }
+
+  Serial.printf("[BLE] connecting to %s ...\n", addr.toString().c_str());
+
+  s_client = NimBLEDevice::createClient();
+  if (!s_client) { Serial.println("[BLE] createClient failed"); return false; }
+
+  if (!s_client->connect(addr)) {
+    Serial.println("[BLE] connect failed");
+    s_client = nullptr;
+    return false;
+  }
+  Serial.println("[BLE] connected");
+
+  // Versuch: direkt den OSSM-Service holen, sonst alle durchsuchen
+  NimBLERemoteService* svc = s_client->getService(NimBLEUUID(kSvcOSSM));
+  if (!svc) {
+    Serial.println("[BLE] OSSM service not found directly; discovering all services...");
+    auto svcs = s_client->getServices(true);
+    for (auto* s : svcs) {
+      if (!s) continue;
+      auto chs = s->getCharacteristics(true);
       for (auto* c : chs) {
         if (!s_charWrite && (c->canWrite() || c->canWriteNoResponse())) s_charWrite = c;
         if (!s_charNotify && c->canNotify())                            s_charNotify = c;
       }
-      if (s_charNotify && s_charNotify->canNotify()) {
-        s_charNotify->subscribe(true,
-          [](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool){
-#if defined(SERIAL_PORT_MONITOR)
-            Serial.print("[OSSM→BLE] ");
-            for (size_t i=0;i<len;i++) Serial.print((char)data[i]);
-            Serial.println();
-#endif
-          }
-        );
-      }
-      if (s_charWrite) return true;
     }
-  }
-
-  // As a last resort, discover all services & their chars
-  std::vector<NimBLERemoteService*> svcs = s_client->getServices(true);
-  for (auto* s : svcs) {
-    if (!s) continue;
-    std::vector<NimBLERemoteCharacteristic*> chs = s->getCharacteristics(true);
+  } else {
+    auto chs = svc->getCharacteristics(true);
     for (auto* c : chs) {
       if (!s_charWrite && (c->canWrite() || c->canWriteNoResponse())) s_charWrite = c;
       if (!s_charNotify && c->canNotify())                            s_charNotify = c;
     }
-    if (s_charNotify && s_charNotify->canNotify()) {
-      s_charNotify->subscribe(true,
-        [](NimBLERemoteCharacteristic*, uint8_t* data, size_t len, bool){
-#if defined(SERIAL_PORT_MONITOR)
-          Serial.print("[OSSM→BLE] ");
-          for (size_t i=0;i<len;i++) Serial.print((char)data[i]);
-          Serial.println();
-#endif
-        }
-      );
-    }
-    if (s_charWrite) return true;
-  }
-  return false;
-}
-
-// --- Public API --------------------------------------------------------------
-void bleInit() {
-  if (s_bleInited) return;
-  NimBLEDevice::init("M5Dial-OSSM-Remote");
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  s_bleInited = true;
-}
-
-bool bleConnectAuto() {
-  if (!s_bleInited) bleInit();
-  if (s_connected) return true;
-
-  NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setActiveScan(true);
-  scan->setInterval(45);
-  scan->setWindow(30);
-
-  scan->start(5, false);
-  NimBLEScanResults results = scan->getResults();
-
-  const NimBLEAdvertisedDevice* choice = nullptr;
-  for (int i=0; i<results.getCount(); ++i) {
-    const NimBLEAdvertisedDevice* dev = results.getDevice(i);
-    std::string n = dev->getName();
-    if (!n.empty() && n.find("OSSM") != std::string::npos) { choice = dev; break; }
-  }
-  scan->stop();
-
-  if (!choice) {
-#if defined(SERIAL_PORT_MONITOR)
-    Serial.println("[BLE] Kein Device mit Namen 'OSSM' gefunden.");
-#endif
-    return false;
   }
 
-  NimBLEAddress addr = choice->getAddress();
-  s_peerName = choice->getName().c_str();
+  if (s_charNotify) subscribe_if_possible(s_charNotify);
 
-  s_client = NimBLEDevice::createClient();
-  if (!s_client) return false;
-
-  if (!s_client->connect(addr)) {
-#if defined(SERIAL_PORT_MONITOR)
-    Serial.println("[BLE] Connect fehlgeschlagen.");
-#endif
-    s_client = nullptr;
-    return false;
+  if (s_charWrite) {
+    Serial.printf("[BLE] write char: %s\n", s_charWrite->getUUID().toString().c_str());
+    const char* msg = "hello\n";
+    bool noRsp = s_charWrite->canWriteNoResponse();
+    bool ok = s_charWrite->writeValue((uint8_t*)msg, strlen(msg), !noRsp);
+    Serial.printf("[BLE] write test %s\n", ok ? "ok" : "FAILED");
+  } else {
+    Serial.println("[BLE] no writable characteristic found");
   }
 
-  // Prefer NUS; fallback to first writeable
-  s_charWrite = nullptr; s_charNotify = nullptr;
-  bool ok = bindNUS();
-  if (!ok) ok = bindFirstWritable(choice);
-
-  s_connected = ok;
-  if (!s_connected) {
-#if defined(SERIAL_PORT_MONITOR)
-    Serial.println("[BLE] Keine passende Characteristic gefunden.");
-#endif
-    bleDisconnect();
-    return false;
-  }
-
-#if defined(SERIAL_PORT_MONITOR)
-  Serial.print("[BLE] Verbunden mit "); Serial.println(s_peerName);
-#endif
-
-  // initial event
-  writeJSON(F("[{\"action\":\"connected\"}]"));
   return true;
 }
 
-void bleDisconnect() {
-  if (s_client && s_client->isConnected()) s_client->disconnect();
-  s_client = nullptr; s_charWrite=nullptr; s_charNotify=nullptr;
-  s_connected = false; s_peerName = "";
-}
 
-bool   bleIsConnected() { return s_connected; }
-String blePeerName()    { return s_peerName;  }
-
-void bleSendJSON(const String& payload) { writeJSON(payload); }
-
-// --- Command wrappers --------------------------------------------------------
-void bleSendConnected()     { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"connected\"}]")); 
-  }
-}
-void bleSendHome()          { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"home\",\"type\":\"sensor\"}]")); 
-  }
-}
-void bleSendDisable()       { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"disable\"}]")); 
-  }
-}
-void bleSendStartStreaming(){ 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"startStreaming\"}]")); 
-  }
-}
-
-void bleSendSpeed(int v)  {
-  if (bleIsConnected()) {
-    v = clampi(v,0,100);
-    if (v==0) writeJSON(F("[{\"action\":\"stop\"}]"));
-    else {
-      String s = String(F("[{\"action\":\"setSpeed\",\"speed\":")) + v + F("}]");
-      writeJSON(s);
+class LiveScanCB : public NimBLEScanCallbacks {
+ public:
+  void onResult(NimBLEAdvertisedDevice* d)  { logOne(d); }
+  void onResult(const NimBLEAdvertisedDevice* d)    { logOne(const_cast<NimBLEAdvertisedDevice*>(d)); }
+ private:
+  static void logOne(NimBLEAdvertisedDevice* d) {
+    if (!d) return;
+    Serial.print("[ADV] RSSI="); Serial.print(d->getRSSI());
+    Serial.print("  Addr=");     Serial.print(d->getAddress().toString().c_str());
+    const std::string& n = d->getName();
+    Serial.print("  Name=");     Serial.println(n.empty() ? "<none>" : n.c_str());
+    if (d->haveServiceUUID()) {
+      Serial.print("      UUIDs: ");
+      for (int i = 0; i < d->getServiceUUIDCount(); ++i) {
+        Serial.print(d->getServiceUUID(i).toString().c_str());
+        if (i < d->getServiceUUIDCount()-1) Serial.print(", ");
+      }
+      Serial.println();
     }
   }
-}
-void bleSendStroke(int v) {
-  if (bleIsConnected()) {
-    v = clampi(v,0,100);
-    String s = String(F("[{\"action\":\"setStroke\",\"stroke\":")) + v + F("}]");
-    writeJSON(s);
-  }
-}
-void bleSendDepth(int v)  {
-  if (bleIsConnected()) {
-    v = clampi(v,0,100);
-    String s = String(F("[{\"action\":\"setDepth\",\"depth\":")) + v + F("}]");
-    writeJSON(s);
-  }
-}
-void bleSendMove(int pos, int ms, bool replace) {
-  if (bleIsConnected()) {
-    pos = clampi(pos,0,100); ms = clampi(ms, 50, 2000);
-    String s = String(F("[{\"action\":\"move\",\"position\":")) + pos +
-              F(",\"time\":") + ms +
-              F(",\"replace\":") + (replace?F("true"):F("false")) + F("}]");
-    writeJSON(s);
-  }
+};
+
+static bool       s_inited = false;
+static LiveScanCB s_liveCB;
+
+void ble_init() {
+  if (s_inited) return;
+  NimBLEDevice::init("scan-live");
+  NimBLEDevice::setOwnAddrType(BLE_OWN_ADDR_PUBLIC);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  s_inited = true;
+  Serial.println("[BLE] init done");
 }
 
-void bleSendSensation(int v) {
-  if (bleIsConnected()) {
-    // clamp -100..+100
-    if (v < -100) v = -100; else if (v > 100) v = 100;
-    String s = String("[{\"action\":\"setSensation\",\"value\":") + v + "}]";
-    writeJSON(s);
+// interner Helper: startet Scan *blocking* mit Callbacks, ohne Re-Init
+static bool start_scan_blocking(int seconds, bool active) {
+  NimBLEScan* s = NimBLEDevice::getScan();
+  if (!s) { Serial.println("[BLE] getScan() NULL"); return false; }
+
+  if (s->isScanning()) { s->stop(); delay(50); }
+  s->clearResults(); delay(10);
+
+  s->setScanCallbacks(&s_liveCB, /*wantDuplicates=*/false);
+  s->setActiveScan(active);
+  s->setDuplicateFilter(true);
+  s->setMaxResults(0);
+  if (active) { s->setInterval(96);  s->setWindow(48);  }   // ~60/30 ms
+  else        { s->setInterval(160); s->setWindow(160); }   // volle Lauscherzeit
+
+  Serial.print("[BLE] "); Serial.print(active ? "ACTIVE" : "PASSIVE");
+  Serial.print(" live-scan "); Serial.print(seconds); Serial.println(" s ...");
+
+  // Non-blocking starten → selber warten → sauber stoppen
+  if (!s->start(seconds, /*is_continue=*/true)) {
+    Serial.println("[BLE] scan start failed");
+    return false;
   }
+
+  uint32_t tEnd = millis() + (uint32_t)seconds * 1000UL;
+  while (millis() < tEnd) delay(50);
+
+  s->stop(); delay(50);
+  Serial.println("[BLE] scan stop");
+  s->clearResults(); delay(10);
+  return true;
 }
 
-void bleSendSetPhysicalTravel(int mm) {
-  if (bleIsConnected()) {
-    if (mm < 1) mm = 1;             // simple sanity
-    String s = String("[{\"action\":\"setPhysicalTravel\",\"value\":") + mm + "}]";
-    writeJSON(s);
-  }
-}
-void bleSendRetract() { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"retract\"}]")); 
-  }
-}
-void bleSendExtend()  { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"extend\"}]"));  
-  }
-}
-void bleSendAirIn()   { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"airIn\"}]"));
-  }   
-}
-void bleSendAirOut()  { 
-  if (bleIsConnected()) {
-    writeJSON(F("[{\"action\":\"airOut\"}]"));  
-  }
+void ble_scan_live(int seconds) {
+  if (!s_inited) ble_init();
+  if (seconds <= 0) seconds = 15;
+
+  // 1) Active
+  start_scan_blocking(seconds, /*active=*/true);
+
+  // 2) Passive (ein zweiter Blick findet manchmal Geräte ohne Scan-Response)
+  start_scan_blocking(seconds, /*active=*/false);
 }

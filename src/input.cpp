@@ -107,16 +107,19 @@ static void onTap(int x,int y){
     for(int i=0;i<4;i++){
       int rx=CX-70, ry=rows[i].y-12;
       if (x>=rx && x<=rx+140 && y>=ry && y<=ry+24){
-        if (i==0){ if (bleIsConnected()) bleDisconnect(); else bleConnectAuto(); closeSettings(); }
+        if (i==0){ 
+          //if (bleIsConnected()) bleDisconnect(); 
+          //else bleConnectAuto(); closeSettings(); 
+        }
         else if (i==1){ g_running=!g_running; closeSettings(); }
         else if (i==2){ 
-          if (bleIsConnected()) {
-            bleSendHome(); 
-            bleSendSetPhysicalTravel(kPhysicalTravelMm);
-            closeSettings(); 
-          }
+          //if (bleIsConnected()) {
+          //  bleSendHome(); 
+          //  bleSendSetPhysicalTravel(kPhysicalTravelMm);
+          //  closeSettings(); 
+          //}
         }
-        else if (i==3){ if (bleIsConnected()) bleSendDisable(); closeSettings(); }
+        //else if (i==3){ if (bleIsConnected()) bleSendDisable(); closeSettings(); }
         return;
       }
     }
@@ -137,8 +140,8 @@ static void onTap(int x,int y){
   if (cc>=0){
     if (cc==1){ toggleMode(); return; }                 // Play/Pause toggelt Mode
     if (g_mode==Mode::SPEED){ return; }                 // ± im Speed aus
-    if (cc==0){ if (bleIsConnected()) { bleSendRetract(); /*bleSendAirIn();*/ } }
-    if (cc==2){ if (bleIsConnected()) { bleSendExtend();  /*bleSendAirOut();*/ } }
+    //if (cc==0){ if (bleIsConnected()) { bleSendRetract(); /*bleSendAirIn();*/ } }
+    //if (cc==2){ if (bleIsConnected()) { bleSendExtend();  /*bleSendAirOut();*/ } }
     return;
   }
 
@@ -154,7 +157,11 @@ static void onTap(int x,int y){
     if (g_mode==Mode::POSITION){
       draggingPosition=true;
       int np = (int)roundf(t*100.0f);
-      if(np!=g_position){ g_position=np; needsRedraw=true; if(bleIsConnected()) bleSendMove(g_position,g_moveTime,true);}    
+      if(np!=g_position){ 
+        g_position=np; 
+        needsRedraw=true; 
+        //if(bleIsConnected()) bleSendMove(g_position,g_moveTime,true);
+      }    
     } else {
       draggingSensation=true;
       // Mapping: links = +100 → Mitte = 0 → rechts = −100
@@ -186,7 +193,11 @@ static void onDrag(int x,int y){
     float t = (a + 90.0f) / 180.0f;
     int nv = (int)roundf(t * 100.0f);
     nv = clampi(nv, 0, g_depth - MIN_GAP);
-    if (nv != g_stroke) { g_stroke = nv; needsRedraw = true; if (bleIsConnected()) bleSendStroke(g_stroke); }
+    if (nv != g_stroke) { 
+      g_stroke = nv;
+      needsRedraw = true;
+      //if (bleIsConnected()) bleSendStroke(g_stroke); 
+    }
   }
   else if (draggingDepth){
     float a = relTopDeg(x,y);
@@ -194,7 +205,11 @@ static void onDrag(int x,int y){
     float t = (a + 90.0f) / 180.0f;
     int nv = (int)roundf(t * 100.0f);
     nv = clampi(nv, g_stroke + MIN_GAP, 100);
-    if (nv != g_depth) { g_depth = nv; needsRedraw = true; if (bleIsConnected()) bleSendDepth(g_depth); }
+    if (nv != g_depth) { 
+      g_depth = nv;
+      needsRedraw = true;
+      //if (bleIsConnected()) bleSendDepth(g_depth); 
+    }
   }
   else if (draggingSensation){
     float a = relBottomDeg(x,y);
@@ -206,7 +221,7 @@ static void onDrag(int x,int y){
       g_sensation = ns; 
       needsRedraw = true;
       if (g_mode == Mode::SPEED) {
-        bleSendSensation(g_sensation);
+        //bleSendSensation(g_sensation);
       } 
     }
   }
@@ -215,7 +230,11 @@ static void onDrag(int x,int y){
     a = clampf(a, -75.0f, +75.0f);
     float t = (a + 75.0f) / 150.0f;
     int nv = (int)roundf(t * 100.0f);
-    if (nv != g_position) { g_position = nv; needsRedraw = true; if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true); }
+    if (nv != g_position) {
+       g_position = nv; 
+       needsRedraw = true;
+        //if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true); 
+    }
   }
 }
 
@@ -317,13 +336,13 @@ if (dRaw != 0) {
         int ns = clampi(g_speed + steps, 0, 100);
         if (ns != g_speed) {
           g_speed = ns; needsRedraw = true;
-          if (bleIsConnected()) bleSendSpeed(g_speed);
+          //if (bleIsConnected()) bleSendSpeed(g_speed);
         }
       } else { // POSITION
         int np = clampi(g_position + steps, 0, 100);
         if (np != g_position) {
           g_position = np; needsRedraw = true;
-          if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true);
+          //if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true);
         }
       }
     }
