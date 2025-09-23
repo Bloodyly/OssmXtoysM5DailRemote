@@ -32,6 +32,8 @@ bool needsRedraw = true;
 int lastDeltaSign = 0;
 uint32_t lastDeltaMs = 0;
 
+uint32_t s_uiNextMs    = 0;
+uint16_t s_uiIntervalMs= 1000/60; // default 60 fps
 
 // ======= API-Implementierung =======
 void toggleMode() {

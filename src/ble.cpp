@@ -14,6 +14,11 @@ static bool        s_inited     = false;
 static bool        s_scanRun    = false;
 static String      s_peerAddr   = "";
 static uint32_t    s_nextActionMs = 0;
+// --- TX Rate Limiter (~30 Hz Standard) ---
+static uint32_t   s_minIntervalMs = 33;   // 33 ms ≈ 30 Hz
+static uint32_t   s_lastSendMs    = 0;    // 0 = Leerlauf (erste Änderung sofort)
+static String     s_pending;              // koaleszierter letzter JSON-String
+static bool       s_hasPending    = false;
 
 // Treffer aus Scan-Callback
 static volatile bool   s_hitPending = false;
@@ -291,7 +296,15 @@ void ble_tick() {
       break;
 
     case BleState::Connected:
-      // nichts; Disconnect wird via Callback gehandhabt
+      if (s_hasPending){
+        const uint32_t now = millis();
+        if (s_lastSendMs == 0 || (now - s_lastSendMs) >= s_minIntervalMs) {
+          if(send_text_auto(s_pending.c_str())){
+            s_lastSendMs = now;
+            s_hasPending = false;
+          }
+        }
+      }
       break;
 
     case BleState::Backoff:
@@ -306,31 +319,38 @@ void ble_tick() {
 }
 // --- JSON/Command API --------------------------------------------------------
 
-bool bleSendJSON(const String& payload) {
-  // optional: kurze Konsolen-Ausgabe
-  //Serial.print("[BLE→OSSM] "); Serial.println(payload);
-  String wire = payload + "\n";
-  return send_text_auto(wire.c_str());
+bool bleSendJSON(const String& payload, bool critical) {
+  if (!ble_is_connected()) return false;
+    const uint32_t now = millis();
+    String wire = payload + "\n";
+  if (critical) {// z.B. Home/Retract/Extend/Disable
+    s_lastSendMs = now;
+    return send_text_auto(wire.c_str());
+  } else {
+    s_pending = wire;
+    s_hasPending = true;
+    return true;
+  }
 }
 
+// Feste API Calls
 void bleSendConnected() {
-  if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"connected\"}]"));
+  bleSendJSON(F("[{\"action\":\"connected\"}]"));
 }
 
 void bleSendHome() {
-  if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"home\",\"type\":\"sensor\"}]"));
+  bleSendJSON(F("[{\"action\":\"home\",\"type\":\"sensor\"}]"));
 }
 
 void bleSendDisable() {
-  if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"disable\"}]"));
+  bleSendJSON(F("[{\"action\":\"disable\"}]"));
 }
 
 void bleSendStartStreaming() {
-  if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"startStreaming\"}]"));
+  bleSendJSON(F("[{\"action\":\"startStreaming\"}]"));
 }
 
 void bleSendSpeed(int v) {
-  if (!ble_is_connected()) return;
   v = clampi(v, 0, 100);
   if (v == 0) {
     bleSendJSON(F("[{\"action\":\"stop\"}]"));
@@ -341,21 +361,18 @@ void bleSendSpeed(int v) {
 }
 
 void bleSendStroke(int v) {
-  if (!ble_is_connected()) return;
   v = clampi(v, 0, 100);
   String s = String(F("[{\"action\":\"setStroke\",\"stroke\":")) + v + F("}]");
   bleSendJSON(s);
 }
 
 void bleSendDepth(int v) {
-  if (!ble_is_connected()) return;
   v = clampi(v, 0, 100);
   String s = String(F("[{\"action\":\"setDepth\",\"depth\":")) + v + F("}]");
   bleSendJSON(s);
 }
 
 void bleSendMove(int pos, int ms, bool replace) {
-  if (!ble_is_connected()) return;
   pos = clampi(pos, 0, 100);
   ms  = clampi(ms, 50, 2000);
   String s = String(F("[{\"action\":\"move\",\"position\":")) + pos +
@@ -365,27 +382,24 @@ void bleSendMove(int pos, int ms, bool replace) {
 }
 
 void bleSendSensation(int v) {
-  if (!ble_is_connected()) return;
   if (v < -100) v = -100; else if (v > 100) v = 100;
   String s = String(F("[{\"action\":\"setSensation\",\"sensation\":")) + v + F("}]");
   bleSendJSON(s);
 }
 
 void bleSendPattern(int patternIndex) {
-  if (!ble_is_connected()) return;
   String s = String(F("[{\"action\":\"setPattern\",\"pattern\":")) + patternIndex + F("}]");
   bleSendJSON(s);
 }
 
 void bleSendSetPhysicalTravel(int mm) {
-  if (!ble_is_connected()) return;
   if (mm < 1) mm = 1;
   String s = String(F("[{\"action\":\"setPhysicalTravel\",\"travel\":")) + mm + F("}]");
   bleSendJSON(s);
 }
 
-void bleSendRetract() { if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"retract\"}]")); }
-void bleSendExtend()  { if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"extend\"}]"));  }
-void bleSendAirIn()   { if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"airIn\"}]"));   }
-void bleSendAirOut()  { if (ble_is_connected()) bleSendJSON(F("[{\"action\":\"airOut\"}]"));  }
+void bleSendRetract() {  bleSendJSON(F("[{\"action\":\"retract\"}]")); }
+void bleSendExtend()  {  bleSendJSON(F("[{\"action\":\"extend\"}]"));  }
+void bleSendAirIn()   {  bleSendJSON(F("[{\"action\":\"airIn\"}]"));   }
+void bleSendAirOut()  {  bleSendJSON(F("[{\"action\":\"airOut\"}]"));  }
 

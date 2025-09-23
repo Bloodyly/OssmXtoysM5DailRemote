@@ -183,9 +183,20 @@ static void drawPatternPicker(){
     d.drawString(g_patterns[i], CX-96+96, y+14);
   }
 }
-
+void initUI(){
+  uint32_t now = millis();
+  s_uiNextMs  = now + s_uiIntervalMs;
+  needsRedraw;
+}
 // -------------------- Haupt-Draw --------------------
 void drawUI(){
+  uint32_t now = millis();
+  // Wenn Gate noch zu, direkt raus – egal ob needsRedraw true ist.
+  if (!needsRedraw) return;
+  if ((int32_t)(now - s_uiNextMs) < 0) return;
+  s_uiNextMs  = now + s_uiIntervalMs;
+  needsRedraw = false;
+
   auto& d = g_spr;
 
   // Hintergrund (Sprite ist in setup bereits erstellt/konfiguriert)

@@ -15,6 +15,8 @@ void ble_auto_start();
 
 // In loop() regelmäßig aufrufen
 void ble_tick();
+void bleSetMaxRateHz(int hz);   // z.B. 30
+void blePump();                 // im loop() aufrufen
 
 // Status-Helpers
 bool        ble_is_connected();
@@ -23,7 +25,7 @@ const char* ble_peer_addr();   // z.B. "58:8c:81:af:6a:96" oder "" wenn unbekann
 
 // --- JSON/Command API --------------------------------------------------------
 // Direkter JSON-Write (falls du mal freie JSON-Strings senden willst)
-bool bleSendJSON(const String& payload);
+bool bleSendJSON(const String& payload,bool critical = false);
 
 // Komfort-Wrapper wie in deiner ersten Version
 void bleSendConnected();

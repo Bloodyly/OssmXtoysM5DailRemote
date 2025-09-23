@@ -31,8 +31,9 @@ extern bool g_showPatternPicker;
 extern int  g_pickerScroll;
 
 extern int32_t lastEncoder;
-extern bool needsRedraw;
-
+extern bool needsRedraw;               // muss neu gezeichnet werden
+extern uint16_t s_uiIntervalMs;       // aktuelles Intervall (adaptiv)
+extern uint32_t s_uiNextMs;            // wann darf wieder gezeichnet werden
 // Encoder-Filter
 extern int lastDeltaSign;
 extern uint32_t lastDeltaMs;

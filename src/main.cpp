@@ -17,19 +17,15 @@ void setup(){
   g_spr.setTextWrap(false);
   g_spr.setTextDatum(textdatum_t::middle_center);
   g_spr.setFont(&fonts::Font4);
- delay(300);
- ble_init();
- ble_auto_start();
- //bleConnectAuto();     // scan + connect to device named "OSSM"
-  needsRedraw = true;
+  delay(300);
+  ble_init();
+  ble_auto_start();
+  initUI();
 }
 
 void loop(){
   //M5Dial.update();
   ble_tick();
   inputUpdate();      // Buttons, Encoder, Touch, BLE-Actions auslösen
-  if (needsRedraw) {  // nur neu zeichnen wenn notwendig → flackerfrei
-    drawUI();
-    needsRedraw = false;
-  }
+  drawUI();
 }
