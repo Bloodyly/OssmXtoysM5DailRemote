@@ -1,5 +1,5 @@
 #include "app_state.h"
-
+#include "ble.h"
 
 // Sprite an den Display-Owner binden
 LGFX_Sprite g_spr(&M5Dial.Display);
@@ -32,17 +32,14 @@ bool needsRedraw = true;
 int lastDeltaSign = 0;
 uint32_t lastDeltaMs = 0;
 
-// ======= Forward BLE (nur Deklaration; Implementierung in ble.cpp) =======
-void sendStartStreaming();
-void sendSpeed(int v);
 
 // ======= API-Implementierung =======
 void toggleMode() {
   if (g_mode == Mode::SPEED) {
     g_mode = Mode::POSITION;
     g_running = false;
-    if (g_speed != 0) { g_speed = 0; sendSpeed(0); }
-    sendStartStreaming();
+    if (g_speed != 0) { g_speed = 0; bleSendSpeed(0); }
+    bleSendStartStreaming();
   } else {
     g_mode = Mode::SPEED;
     g_running = true;

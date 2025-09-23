@@ -244,7 +244,7 @@ void drawUI(){
   #if defined(M5UNIFIED_H) || defined(ARDUINO_M5STACK_CoreS3) || defined(ARDUINO_M5STACK_DIAL)
     pct = M5.Power.getBatteryLevel(); // 0..100 (M5Unified)
   #endif
-  drawBattery(W - 22, 16, pct);
+  //drawBattery(W - 22, 16, pct);
 
   // Ausgabe
   d.pushSprite(0, 0);

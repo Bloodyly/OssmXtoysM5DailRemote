@@ -19,23 +19,17 @@ void setup(){
   g_spr.setFont(&fonts::Font4);
  delay(300);
  ble_init();
- ble_scan_live(20);   // 20 s Live-Scan
-if (ble_find_and_connect_ossm(10)) {
-  Serial.println("[APP] ready – verbunden mit OSSM");
-} else {
-  Serial.println("[APP] kein OSSM erreichbar");
-}
-  //bleConnectAuto();     // scan + connect to device named "OSSM"
+ ble_auto_start();
+ //bleConnectAuto();     // scan + connect to device named "OSSM"
   needsRedraw = true;
 }
 
 void loop(){
   //M5Dial.update();
-/*
+  ble_tick();
   inputUpdate();      // Buttons, Encoder, Touch, BLE-Actions auslösen
   if (needsRedraw) {  // nur neu zeichnen wenn notwendig → flackerfrei
     drawUI();
     needsRedraw = false;
   }
-  */  
 }

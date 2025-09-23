@@ -35,7 +35,7 @@ static void encoderSampler(void*){
 
   for(;;){
     // Alle 2 ms reicht meist locker, 1 ms geht auch – 2 ms schont I2C/Touch
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(pdMS_TO_TICKS(8));
 
     // EINZIGE Stelle im Programm, die M5Dial.update() aufruft:
     M5Dial.update();
@@ -108,18 +108,18 @@ static void onTap(int x,int y){
       int rx=CX-70, ry=rows[i].y-12;
       if (x>=rx && x<=rx+140 && y>=ry && y<=ry+24){
         if (i==0){ 
-          //if (bleIsConnected()) bleDisconnect(); 
+          //if (ble_is_connected()) bleDisconnect(); 
           //else bleConnectAuto(); closeSettings(); 
         }
         else if (i==1){ g_running=!g_running; closeSettings(); }
         else if (i==2){ 
-          //if (bleIsConnected()) {
-          //  bleSendHome(); 
-          //  bleSendSetPhysicalTravel(kPhysicalTravelMm);
-          //  closeSettings(); 
-          //}
+          if (ble_is_connected()) {
+            bleSendHome(); 
+            bleSendSetPhysicalTravel(kPhysicalTravelMm);
+            closeSettings(); 
+          }
         }
-        //else if (i==3){ if (bleIsConnected()) bleSendDisable(); closeSettings(); }
+        else if (i==3){ if (ble_is_connected()) bleSendDisable(); closeSettings(); }
         return;
       }
     }
@@ -130,18 +130,19 @@ static void onTap(int x,int y){
     int listTop = CY-60 - g_pickerScroll;
     for (int i=0;i<(int)g_patterns.size();++i){
       int y0=listTop+i*34; int y1=y0+28;
-      if (x>=CX-96 && x<=CX+96 && y>=y0 && y<=y1){ g_patternIndex=i; closePicker(); return; }
+      if (x>=CX-96 && x<=CX+96 && y>=y0 && y<=y1){ g_patternIndex=i; closePicker(); bleSendPattern(g_patternIndex); return; }
     }
-    closePicker(); return;
+    closePicker(); 
+    bleSendPattern(g_patternIndex);
+    return;
   }
 
   // obere Buttons
   int cc = hitTopButtons(x,y);
   if (cc>=0){
     if (cc==1){ toggleMode(); return; }                 // Play/Pause toggelt Mode
-    if (g_mode==Mode::SPEED){ return; }                 // ± im Speed aus
-    //if (cc==0){ if (bleIsConnected()) { bleSendRetract(); /*bleSendAirIn();*/ } }
-    //if (cc==2){ if (bleIsConnected()) { bleSendExtend();  /*bleSendAirOut();*/ } }
+    if (cc==0){ if (ble_is_connected()) { bleSendRetract(); bleSendAirIn(); } }
+    if (cc==2){ if (ble_is_connected()) { bleSendExtend();  bleSendAirOut(); } }
     return;
   }
 
@@ -160,7 +161,7 @@ static void onTap(int x,int y){
       if(np!=g_position){ 
         g_position=np; 
         needsRedraw=true; 
-        //if(bleIsConnected()) bleSendMove(g_position,g_moveTime,true);
+        if(ble_is_connected()) bleSendMove(g_position,g_moveTime,true);
       }    
     } else {
       draggingSensation=true;
@@ -196,7 +197,7 @@ static void onDrag(int x,int y){
     if (nv != g_stroke) { 
       g_stroke = nv;
       needsRedraw = true;
-      //if (bleIsConnected()) bleSendStroke(g_stroke); 
+      if (ble_is_connected()) bleSendStroke(g_stroke); 
     }
   }
   else if (draggingDepth){
@@ -208,7 +209,7 @@ static void onDrag(int x,int y){
     if (nv != g_depth) { 
       g_depth = nv;
       needsRedraw = true;
-      //if (bleIsConnected()) bleSendDepth(g_depth); 
+      if (ble_is_connected()) bleSendDepth(g_depth); 
     }
   }
   else if (draggingSensation){
@@ -221,7 +222,7 @@ static void onDrag(int x,int y){
       g_sensation = ns; 
       needsRedraw = true;
       if (g_mode == Mode::SPEED) {
-        //bleSendSensation(g_sensation);
+        bleSendSensation(g_sensation);
       } 
     }
   }
@@ -233,7 +234,7 @@ static void onDrag(int x,int y){
     if (nv != g_position) {
        g_position = nv; 
        needsRedraw = true;
-        //if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true); 
+        if (ble_is_connected()) bleSendMove(g_position, g_moveTime, true); 
     }
   }
 }
@@ -249,7 +250,7 @@ void inputUpdate(){
     if (g_showPatternPicker) { closePicker(); } else { g_showSettings = !g_showSettings; }
     needsRedraw = true;
   } else if (M5Dial.BtnA.wasPressed()) {
-    if (g_showPatternPicker) { closePicker(); needsRedraw = true; }
+    if (g_showPatternPicker) { closePicker(); bleSendPattern(g_patternIndex);needsRedraw = true; }
     else if (!g_showSettings) { toggleMode(); }
   }
 
@@ -336,13 +337,13 @@ if (dRaw != 0) {
         int ns = clampi(g_speed + steps, 0, 100);
         if (ns != g_speed) {
           g_speed = ns; needsRedraw = true;
-          //if (bleIsConnected()) bleSendSpeed(g_speed);
+          if (ble_is_connected()) bleSendSpeed(g_speed);
         }
       } else { // POSITION
         int np = clampi(g_position + steps, 0, 100);
         if (np != g_position) {
           g_position = np; needsRedraw = true;
-          //if (bleIsConnected()) bleSendMove(g_position, g_moveTime, true);
+          if (ble_is_connected()) bleSendMove(g_position, g_moveTime, true);
         }
       }
     }

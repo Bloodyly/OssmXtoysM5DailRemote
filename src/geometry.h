@@ -30,6 +30,6 @@ static const float SENS_START = 15.0f;  // unten links
 static const float SENS_END   = 165.0f; // unten rechts
 
 // Controls
-static const int CTRL_SPACING = 32;
+static const int CTRL_SPACING = 40;
 static const int BUTTONS_Y    = CY - 16; // Minus/Play/Plus oben
 static const int CTRL_Y       = CY + 36; // Pattern-Pill unten
