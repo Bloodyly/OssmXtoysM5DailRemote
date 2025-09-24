@@ -130,7 +130,7 @@ static void drawSettingsOverlay(){
   d.setTextDatum(textdatum_t::middle_center); d.setFont(&fonts::Font2);
 
   struct Btn{const char* label; uint32_t col; int y;};
-  Btn btns[4]={{/*bleIsConnected() ? "Trennen" :*/ "Verbinden", d.color888(0,180,255), CY-34},
+  Btn btns[4]={{ble_is_connected() ? "Connected" : "DisConnected", d.color888(0,180,255), CY-34},
       { g_running   ? "Stop"    : "Start",     d.color888(255,120,120), CY-2},
       { "Home",                                   d.color888(180,255,180), CY+30},
       { "Disable",                                d.color888(220,220,220), CY+62}

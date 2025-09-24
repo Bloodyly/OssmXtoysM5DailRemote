@@ -115,7 +115,7 @@ static void onTap(int x,int y){
         else if (i==2){ 
           if (ble_is_connected()) {
             bleSendHome(); 
-            bleSendSetPhysicalTravel(kPhysicalTravelMm);
+            //bleSendSetPhysicalTravel(kPhysicalTravelMm);
             closeSettings(); 
           }
         }

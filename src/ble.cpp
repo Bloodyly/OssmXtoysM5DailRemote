@@ -339,7 +339,7 @@ void bleSendConnected() {
 }
 
 void bleSendHome() {
-  bleSendJSON(F("[{\"action\":\"home\",\"type\":\"sensor\"}]"));
+  bleSendJSON(F("[{\"action\":\"home\"}]"));
 }
 
 void bleSendDisable() {
